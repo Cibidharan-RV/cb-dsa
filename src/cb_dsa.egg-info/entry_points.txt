@@ -1,0 +1,2 @@
+[console_scripts]
+cb-dsa = cb_dsa.main:app
