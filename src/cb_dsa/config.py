@@ -10,7 +10,18 @@ DEFAULT_CONFIG = {
     "structure": "category",  # flat or category
     "folder_format": "{id}_{name}",
     "file_name_format": "{id}_{name}_soln",
-    "doc_name_format": "{id}_{name}_doc"
+    "doc_name_format": "{id}_{name}_doc",
+    "dashboard_title": "DSA Journey",
+    "dashboard_subtitle": "My data structures & algorithms progress.",
+    "dashboard_theme": "dark",
+    "author_name": "Your Name",
+    "github_username": "your-username",
+    "github_url": "#",
+    "linkedin_url": "#",
+    "twitter_url": "#",
+    "leetcode_url": "#",
+    "auto_commit": False,
+    "github_repo_url": ""
 }
 
 def load_config(base_dir: str) -> Dict[str, Any]:

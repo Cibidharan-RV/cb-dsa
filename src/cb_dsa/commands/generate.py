@@ -1,9 +1,13 @@
 import os
 import re
 import datetime
+import time
 import json
 import urllib.parse
 from rich.console import Console
+
+from cb_dsa.commands.dashboard_templates import HTML_TEMPLATE, CSS_TEMPLATE, JS_TEMPLATE
+from cb_dsa.config import load_config
 
 console = Console()
 
@@ -222,21 +226,42 @@ def update_readme():
     with open(os.path.join(docs_dir, "data.js"), 'w', encoding='utf-8') as f:
         f.write(js_content)
         
-    import time
+    config = load_config(base_dir)
+    
+    def customize_template(t):
+        t = t.replace("[[TITLE]]", config.get("dashboard_title", "DSA Journey"))
+        t = t.replace("[[SUBTITLE]]", config.get("dashboard_subtitle", "My data structures & algorithms progress."))
+        theme = config.get("dashboard_theme", "dark")
+        t = t.replace("[[THEME_CLASS]]", "pink-mode" if theme == "pink" else "dark-mode")
+        t = t.replace("[[GITHUB_URL]]", config.get("github_url", "#"))
+        t = t.replace("[[LINKEDIN_URL]]", config.get("linkedin_url", "#"))
+        t = t.replace("[[TWITTER_URL]]", config.get("twitter_url", "#"))
+        t = t.replace("[[LEETCODE_URL]]", config.get("leetcode_url", "#"))
+        t = t.replace("[[GITHUB_REPO_URL]]", config.get("github_repo_url", ""))
+        return t
+
+
+    timestamp = int(time.time())
+    
     index_path = os.path.join(docs_dir, "index.html")
-    if os.path.exists(index_path):
-        with open(index_path, 'r', encoding='utf-8') as f:
-            index_content = f.read()
-        
-        timestamp = int(time.time())
-        index_content = re.sub(r'data\.js(\?v=\d+)?', f'data.js?v={timestamp}', index_content)
-        index_content = re.sub(r'app\.js(\?v=\d+)?', f'app.js?v={timestamp}', index_content)
-        index_content = re.sub(r'styles\.css(\?v=\d+)?', f'styles.css?v={timestamp}', index_content)
-        
-        with open(index_path, 'w', encoding='utf-8') as f:
-            f.write(index_content)
+    index_content = customize_template(HTML_TEMPLATE)
+    index_content = re.sub(r'data\.js(\?v=\d+)?', f'data.js?v={timestamp}', index_content)
+    index_content = re.sub(r'app\.js(\?v=\d+)?', f'app.js?v={timestamp}', index_content)
+    index_content = re.sub(r'styles\.css(\?v=\d+)?', f'styles.css?v={timestamp}', index_content)
+    
+    with open(index_path, 'w', encoding='utf-8') as f:
+        f.write(index_content)
             
-    console.print(f"[bold green]✓ Successfully updated README.md and docs/data.js with {total_problems} problems.[/bold green]")
+    css_path = os.path.join(docs_dir, "styles.css")
+    if not os.path.exists(css_path):
+        with open(css_path, 'w', encoding='utf-8') as f:
+            f.write(CSS_TEMPLATE)
+
+    js_path = os.path.join(docs_dir, "app.js")
+    with open(js_path, 'w', encoding='utf-8') as f:
+        f.write(customize_template(JS_TEMPLATE))
+            
+    console.print(f"[bold green]✓ Successfully updated README.md and docs/ dashboard files with {total_problems} problems.[/bold green]")
 
 if __name__ == "__main__":
     update_readme()

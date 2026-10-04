@@ -1,5 +1,6 @@
 import os
 import urllib.request
+import urllib.error
 import json
 import ssl
 import time
@@ -16,20 +17,37 @@ LANG_EXTENSIONS = {
     'kotlin': '.kt', 'php': '.php'
 }
 
-def get_session_cookie(base_dir, prompt_if_missing=True):
+def get_session_cookie(base_dir, prompt_if_missing=True, force_prompt=False):
     env_path = os.path.join(base_dir, ".env")
     session_cookie = ""
+    lines = []
+    
     if os.path.exists(env_path):
         with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
+            lines = f.readlines()
+            for line in lines:
                 if line.startswith("LEETCODE_SESSION="):
                     session_cookie = line.strip().split('=', 1)[1]
     
-    if not session_cookie and prompt_if_missing:
+    if force_prompt or (not session_cookie and prompt_if_missing):
+        if force_prompt:
+            console.print("\n[bold yellow]Your LeetCode session seems to be expired or invalid.[/bold yellow]")
+            console.print("Instructions: Open leetcode.com, open Developer Tools (F12) -> Application -> Cookies -> Copy the value of LEETCODE_SESSION.")
+            
         session_cookie = Prompt.ask("\n[bold cyan]Paste your LEETCODE_SESSION cookie (will be saved to .env)[/bold cyan]").strip()
+        
         if session_cookie:
-            with open(env_path, 'a', encoding='utf-8') as f:
-                f.write(f"LEETCODE_SESSION={session_cookie}\n")
+            found = False
+            for i, line in enumerate(lines):
+                if line.startswith("LEETCODE_SESSION="):
+                    lines[i] = f"LEETCODE_SESSION={session_cookie}\n"
+                    found = True
+                    break
+            if not found:
+                lines.append(f"LEETCODE_SESSION={session_cookie}\n")
+            with open(env_path, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+                
     return session_cookie
 
 def get_last_category(base_dir):
@@ -117,7 +135,33 @@ def fetch_graphql(query, variables, session_cookie=None, csrf_token=None, retrie
     for attempt in range(retries):
         try:
             response = urllib.request.urlopen(req, context=context, timeout=10)
-            return json.loads(response.read())
+            data = json.loads(response.read())
+            
+            if 'errors' in data and any('permission denied' in str(err).lower() or 'anonymous' in str(err).lower() for err in data['errors']):
+                raise urllib.error.HTTPError(graphql_url, 401, "Unauthorized in body", req.headers, None)
+                
+            return data
+            
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403) and attempt == 0:
+                base_dir = os.getcwd()
+                new_cookie = get_session_cookie(base_dir, force_prompt=True)
+                new_csrf = get_csrf_token(new_cookie)
+                
+                req.headers['Cookie'] = f'LEETCODE_SESSION={new_cookie}; csrftoken={new_csrf}'
+                req.headers['X-CSRFToken'] = new_csrf
+                
+                if hasattr(req, 'unredirected_hdrs'):
+                    req.unredirected_hdrs['Cookie'] = f'LEETCODE_SESSION={new_cookie}; csrftoken={new_csrf}'
+                    req.unredirected_hdrs['X-CSRFToken'] = new_csrf
+                continue
+                
+            elif attempt < retries - 1:
+                time.sleep(2)
+            else:
+                console.print(f"[bold red]GraphQL request failed: {e}[/bold red]")
+                return None
+                
         except Exception as e:
             if attempt < retries - 1:
                 time.sleep(2)
@@ -171,6 +215,22 @@ def fetch_submissions(session_cookie, offset, limit, retries=5):
         try:
             response = urllib.request.urlopen(req, context=context, timeout=30)
             return json.loads(response.read())
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403) and attempt == 0:
+                base_dir = os.getcwd()
+                new_cookie = get_session_cookie(base_dir, force_prompt=True)
+                
+                req.headers['Cookie'] = f'LEETCODE_SESSION={new_cookie}'
+                if hasattr(req, 'unredirected_hdrs'):
+                    req.unredirected_hdrs['Cookie'] = f'LEETCODE_SESSION={new_cookie}'
+                continue
+                
+            elif attempt < retries - 1:
+                console.print(f"[yellow]Timeout/Error at offset {offset}. Retrying ({attempt+1}/{retries})...[/yellow]")
+                time.sleep(5)
+            else:
+                console.print(f"[bold red]Failed to fetch submissions at offset {offset}: {e}[/bold red]")
+                return None
         except Exception as e:
             if attempt < retries - 1:
                 console.print(f"[yellow]Timeout at offset {offset}. Retrying ({attempt+1}/{retries})...[/yellow]")
