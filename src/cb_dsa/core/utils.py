@@ -4,6 +4,7 @@ import urllib.error
 import json
 import ssl
 import time
+import re
 
 from rich.console import Console
 from rich.prompt import Prompt
@@ -17,92 +18,192 @@ LANG_EXTENSIONS = {
     'kotlin': '.kt', 'php': '.php'
 }
 
-def get_session_cookie(base_dir, prompt_if_missing=True, force_prompt=False):
+def find_repo_root(start_dir=None):
+    """
+    Find the root directory of the cb-dsa repository by looking for dsa-config.json or .git.
+    Falls back to start_dir or current working directory.
+    """
+    if not start_dir:
+        start_dir = os.getcwd()
+    cur = os.path.abspath(start_dir)
+    while True:
+        if os.path.exists(os.path.join(cur, "dsa-config.json")) or os.path.exists(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return os.path.abspath(start_dir)
+        cur = parent
+
+def sanitize_cookie(raw_cookie):
+    """
+    Strips whitespace, quotes, and common prefix wrappers like LEETCODE_SESSION= or Cookie:.
+    """
+    if not raw_cookie:
+        return ""
+    c = str(raw_cookie).strip()
+    if c.lower().startswith("cookie:"):
+        c = c[7:].strip()
+    if "leetcode_session=" in c.lower():
+        m = re.search(r'leetcode_session=([^;\s]+)', c, re.IGNORECASE)
+        if m:
+            c = m.group(1)
+        else:
+            c = re.sub(r'(?i)leetcode_session=', '', c).strip()
+    c = c.split(';')[0].strip()
+    c = c.strip("'\"")
+    return c
+
+def read_env_file(base_dir):
+    """
+    Reads .env file returning a dict of key-values without trailing quotes/whitespace.
+    """
+    base_dir = find_repo_root(base_dir)
     env_path = os.path.join(base_dir, ".env")
-    session_cookie = ""
+    env_vars = {}
+    if os.path.exists(env_path):
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line_str = line.strip()
+                if not line_str or line_str.startswith('#') or '=' not in line_str:
+                    continue
+                k, v = line_str.split('=', 1)
+                env_vars[k.strip()] = v.strip().strip("'\"")
+    return env_vars
+
+def write_env_var(base_dir, key, value):
+    """
+    Writes or updates a key in .env, deduplicating any repeated keys.
+    """
+    base_dir = find_repo_root(base_dir)
+    env_path = os.path.join(base_dir, ".env")
     lines = []
-    
     if os.path.exists(env_path):
         with open(env_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-            for line in lines:
-                if line.startswith("LEETCODE_SESSION="):
-                    session_cookie = line.strip().split('=', 1)[1]
+            
+    new_lines = []
+    found = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+            if not found:
+                new_lines.append(f"{key}={value}\n")
+                found = True
+            # Skip any duplicate lines with the same key
+        else:
+            new_lines.append(line)
+            
+    if not found:
+        if new_lines and not new_lines[-1].endswith('\n'):
+            new_lines[-1] += '\n'
+        new_lines.append(f"{key}={value}\n")
+        
+    with open(env_path, 'w', encoding='utf-8') as f:
+        f.writelines(new_lines)
+
+def validate_session_cookie(cookie):
+    """
+    Checks if a LEETCODE_SESSION cookie is currently authenticated via LeetCode's userStatus query.
+    Returns (is_valid: bool, username: str).
+    """
+    if not cookie:
+        return False, ""
+    cleaned = sanitize_cookie(cookie)
+    if not cleaned:
+        return False, ""
+    context = ssl._create_unverified_context()
+    graphql_url = "https://leetcode.com/graphql/"
+    payload = {"query": "query globalData { userStatus { isSignedIn username } }"}
+    headers = {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+        'Cookie': f'LEETCODE_SESSION={cleaned}'
+    }
+    req = urllib.request.Request(graphql_url, data=json.dumps(payload).encode('utf-8'), headers=headers)
+    try:
+        response = urllib.request.urlopen(req, context=context, timeout=8)
+        data = json.loads(response.read())
+        user_status = data.get('data', {}).get('userStatus', {})
+        if user_status.get('isSignedIn'):
+            return True, user_status.get('username', '')
+    except Exception:
+        pass
+    return False, ""
+
+def get_session_cookie(base_dir, prompt_if_missing=True, force_prompt=False):
+    base_dir = find_repo_root(base_dir)
+    env_vars = read_env_file(base_dir)
+    session_cookie = sanitize_cookie(env_vars.get("LEETCODE_SESSION", ""))
     
     if force_prompt or (not session_cookie and prompt_if_missing):
         if force_prompt:
             console.print("\n[bold yellow]Your LeetCode session seems to be expired or invalid.[/bold yellow]")
             console.print("Instructions: Open leetcode.com, open Developer Tools (F12) -> Application -> Cookies -> Copy the value of LEETCODE_SESSION.")
             
-        session_cookie = Prompt.ask("\n[bold cyan]Paste your LEETCODE_SESSION cookie (will be saved to .env)[/bold cyan]").strip()
-        
-        if session_cookie:
-            found = False
-            for i, line in enumerate(lines):
-                if line.startswith("LEETCODE_SESSION="):
-                    lines[i] = f"LEETCODE_SESSION={session_cookie}\n"
-                    found = True
+        while True:
+            raw_cookie = Prompt.ask("\n[bold cyan]Paste your LEETCODE_SESSION cookie (will be saved to .env)[/bold cyan]").strip()
+            if not raw_cookie:
+                break
+            candidate = sanitize_cookie(raw_cookie)
+            with console.status("[bold cyan]Validating session cookie with LeetCode...[/bold cyan]", spinner="dots"):
+                is_valid, username = validate_session_cookie(candidate)
+            if is_valid:
+                session_cookie = candidate
+                write_env_var(base_dir, "LEETCODE_SESSION", session_cookie)
+                console.print(f"[bold green]✓ Authenticated as '{username}'! Session cookie saved to .env.[/bold green]")
+                break
+            else:
+                console.print("[bold red]✗ Invalid or expired session cookie. LeetCode reported you are not signed in.[/bold red]")
+                retry = Prompt.ask("[bold yellow]Try pasting again?[/bold yellow]", choices=["y", "n"], default="y")
+                if retry.lower() != 'y':
+                    if candidate:
+                        session_cookie = candidate
+                        write_env_var(base_dir, "LEETCODE_SESSION", session_cookie)
+                        console.print("[yellow]Cookie saved without verification.[/yellow]")
                     break
-            if not found:
-                lines.append(f"LEETCODE_SESSION={session_cookie}\n")
-            with open(env_path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
                 
     return session_cookie
 
+def ensure_valid_session(base_dir, current_cookie=None):
+    """
+    Verifies that the session cookie is valid. If missing or invalid, prompts in place,
+    saves the valid cookie to .env immediately, and returns (new_cookie, new_csrf).
+    """
+    base_dir = find_repo_root(base_dir)
+    if not current_cookie:
+        env_vars = read_env_file(base_dir)
+        current_cookie = sanitize_cookie(env_vars.get("LEETCODE_SESSION", ""))
+        
+    is_valid, username = validate_session_cookie(current_cookie)
+    if is_valid:
+        csrf = get_csrf_token(current_cookie)
+        return current_cookie, csrf
+        
+    console.print("\n[bold yellow]⚠ LeetCode session cookie is missing, expired, or invalid.[/bold yellow]")
+    console.print("LeetCode requires an active login session to fetch private submission code.")
+    console.print("[dim]Instructions: Open leetcode.com -> F12 -> Application -> Cookies -> Copy LEETCODE_SESSION[/dim]")
+    
+    new_cookie = get_session_cookie(base_dir, force_prompt=True)
+    if new_cookie:
+        new_csrf = get_csrf_token(new_cookie)
+        return new_cookie, new_csrf
+    return current_cookie, get_csrf_token(current_cookie)
+
 def get_last_category(base_dir):
-    env_path = os.path.join(base_dir, ".env")
-    if os.path.exists(env_path):
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.startswith("LAST_CATEGORY="):
-                    return line.strip().split('=', 1)[1]
-    return None
+    base_dir = find_repo_root(base_dir)
+    return read_env_file(base_dir).get("LAST_CATEGORY")
 
 def save_last_category(base_dir, category):
-    env_path = os.path.join(base_dir, ".env")
-    lines = []
-    found = False
-    if os.path.exists(env_path):
-        with open(env_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            
-    with open(env_path, 'w', encoding='utf-8') as f:
-        for line in lines:
-            if line.startswith("LAST_CATEGORY="):
-                f.write(f"LAST_CATEGORY={category}\n")
-                found = True
-            else:
-                f.write(line)
-        if not found:
-            f.write(f"LAST_CATEGORY={category}\n")
+    base_dir = find_repo_root(base_dir)
+    write_env_var(base_dir, "LAST_CATEGORY", category)
 
 def get_switch_topic(base_dir):
-    env_path = os.path.join(base_dir, ".env")
-    if os.path.exists(env_path):
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.startswith("SWITCH_TOPIC="):
-                    return line.strip().split('=', 1)[1].lower() == 'true'
-    return False
+    base_dir = find_repo_root(base_dir)
+    return read_env_file(base_dir).get("SWITCH_TOPIC", "").lower() == 'true'
 
 def reset_switch_topic(base_dir):
-    env_path = os.path.join(base_dir, ".env")
-    lines = []
-    found = False
-    if os.path.exists(env_path):
-        with open(env_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            
-    with open(env_path, 'w', encoding='utf-8') as f:
-        for line in lines:
-            if line.startswith("SWITCH_TOPIC="):
-                f.write("SWITCH_TOPIC=false\n")
-                found = True
-            else:
-                f.write(line)
-        if not found:
-            f.write("SWITCH_TOPIC=false\n")
+    base_dir = find_repo_root(base_dir)
+    write_env_var(base_dir, "SWITCH_TOPIC", "false")
 
 def get_csrf_token(session_cookie):
     context = ssl._create_unverified_context()
@@ -144,7 +245,7 @@ def fetch_graphql(query, variables, session_cookie=None, csrf_token=None, retrie
             
         except urllib.error.HTTPError as e:
             if e.code in (401, 403) and attempt == 0:
-                base_dir = os.getcwd()
+                base_dir = find_repo_root()
                 new_cookie = get_session_cookie(base_dir, force_prompt=True)
                 new_csrf = get_csrf_token(new_cookie)
                 
@@ -191,7 +292,7 @@ def fetch_problem_data(slug, session_cookie=None, csrf_token=None):
         return res['data'].get('question')
     return None
 
-def fetch_submission_details(submission_id, session_cookie, csrf_token):
+def fetch_submission_details(submission_id, session_cookie, csrf_token, base_dir=None):
     query = """
     query submissionDetails($submissionId: Int!) {
       submissionDetails(submissionId: $submissionId) {
@@ -203,22 +304,38 @@ def fetch_submission_details(submission_id, session_cookie, csrf_token):
     }
     """
     res = fetch_graphql(query, {"submissionId": int(submission_id)}, session_cookie, csrf_token)
-    if res and 'data' in res and res['data'].get('submissionDetails'):
-        return res['data']['submissionDetails']
+    details = res.get('data', {}).get('submissionDetails') if res and 'data' in res else None
+    if details and details.get('code'):
+        return details
+        
+    # If code was not returned, session may be invalid or expired
+    if base_dir:
+        base_dir = find_repo_root(base_dir)
+        console.print("[yellow]Could not retrieve submission code with current session cookie. Checking session...[/yellow]")
+        new_cookie, new_csrf = ensure_valid_session(base_dir, session_cookie)
+        if new_cookie and new_cookie != session_cookie:
+            res = fetch_graphql(query, {"submissionId": int(submission_id)}, new_cookie, new_csrf)
+            details = res.get('data', {}).get('submissionDetails') if res and 'data' in res else None
+            if details and details.get('code'):
+                return details
+                
     return None
 
-def fetch_submissions(session_cookie, offset, limit, retries=5):
+def fetch_submissions(session_cookie, offset, limit, retries=5, base_dir=None):
     context = ssl._create_unverified_context()
     url = f"https://leetcode.com/api/submissions/?offset={offset}&limit={limit}"
     req = urllib.request.Request(url, headers={'Cookie': f'LEETCODE_SESSION={session_cookie}', 'User-Agent': 'Mozilla/5.0'})
     for attempt in range(retries):
         try:
             response = urllib.request.urlopen(req, context=context, timeout=30)
-            return json.loads(response.read())
+            data = json.loads(response.read())
+            if isinstance(data, dict) and ('detail' in data or 'error' in data):
+                raise urllib.error.HTTPError(url, 401, str(data.get('detail', data.get('error'))), req.headers, None)
+            return data
         except urllib.error.HTTPError as e:
             if e.code in (401, 403) and attempt == 0:
-                base_dir = os.getcwd()
-                new_cookie = get_session_cookie(base_dir, force_prompt=True)
+                root_dir = find_repo_root(base_dir)
+                new_cookie = get_session_cookie(root_dir, force_prompt=True)
                 
                 req.headers['Cookie'] = f'LEETCODE_SESSION={new_cookie}'
                 if hasattr(req, 'unredirected_hdrs'):
@@ -256,8 +373,6 @@ def get_slug_from_id(question_id):
             
     console.print(f"[bold yellow]Could not find a problem with ID {question_id}[/bold yellow]")
     return None
-
-import re
 
 def get_clipboard_text():
     try:

@@ -9,26 +9,23 @@ from rich.console import Console
 from cb_dsa.core.utils import (
     LANG_EXTENSIONS, get_session_cookie, get_csrf_token,
     fetch_problem_data, fetch_submission_details, fetch_submissions,
-    get_metadata, clean_code
+    get_metadata, clean_code, find_repo_root, ensure_valid_session, read_env_file
 )
 from cb_dsa.commands.generate import update_readme
 
 console = Console()
 
 def sync_leetcode():
-    base_dir = os.getcwd()
+    base_dir = find_repo_root()
     console.print("[bold blue]=== LeetCode Sync ===[/bold blue]")
     console.print("This script will download your past Accepted submissions.")
     
-    session_cookie = get_session_cookie(base_dir, prompt_if_missing=True)
+    session_cookie, csrf_token = ensure_valid_session(base_dir)
     if not session_cookie:
-        console.print("[bold red]Session cookie is required. Exiting.[/bold red]")
+        console.print("[bold red]Valid session cookie is required. Exiting.[/bold red]")
         return
         
-    console.print("\nFetching CSRF token...")
-    csrf_token = get_csrf_token(session_cookie)
-    
-    console.print("Fetching submissions (this may take a minute)...")
+    console.print(f"Fetching submissions with active session...")
     offset = 0
     limit = 40
     
@@ -36,9 +33,16 @@ def sync_leetcode():
     accepted_problems = {} 
     
     while True:
-        data = fetch_submissions(session_cookie, offset, limit)
+        data = fetch_submissions(session_cookie, offset, limit, base_dir=base_dir)
         if not data:
-            break
+            # Check if session was refreshed
+            new_env = read_env_file(base_dir)
+            if new_env.get("LEETCODE_SESSION") and new_env.get("LEETCODE_SESSION") != session_cookie:
+                session_cookie = new_env.get("LEETCODE_SESSION")
+                csrf_token = get_csrf_token(session_cookie)
+                data = fetch_submissions(session_cookie, offset, limit, base_dir=base_dir)
+            if not data:
+                break
             
         submissions = data.get('submissions_dump', [])
         if not submissions:
@@ -164,8 +168,13 @@ def sync_leetcode():
         console.print(f"Fetching source code for {len(langs_dict)} language(s)...")
         meta = {'idea': '', 'time': 'O(?)', 'space': 'O(?)'}
         for lang, sub_info in langs_dict.items():
-            sub_id = sub_info['id']
-            details = fetch_submission_details(sub_id, session_cookie, csrf_token)
+            details = fetch_submission_details(sub_id, session_cookie, csrf_token, base_dir=base_dir)
+            if not details:
+                new_env = read_env_file(base_dir)
+                if new_env.get("LEETCODE_SESSION") and new_env.get("LEETCODE_SESSION") != session_cookie:
+                    session_cookie = new_env.get("LEETCODE_SESSION")
+                    csrf_token = get_csrf_token(session_cookie)
+                    details = fetch_submission_details(sub_id, session_cookie, csrf_token, base_dir=base_dir)
             code = details.get('code') if details else None
             
             if not code:

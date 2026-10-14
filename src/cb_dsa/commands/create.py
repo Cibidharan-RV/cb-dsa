@@ -5,15 +5,17 @@ import re
 import datetime
 import subprocess
 
+from cb_dsa.config import load_config
 from cb_dsa.core.utils import (
     LANG_EXTENSIONS, get_session_cookie, get_csrf_token, fetch_problem_data, 
     fetch_submission_details, get_slug_from_id, get_last_category, save_last_category,
-    get_switch_topic, reset_switch_topic, get_metadata, clean_code, multiline_input
+    get_switch_topic, reset_switch_topic, get_metadata, clean_code, multiline_input,
+    find_repo_root, ensure_valid_session
 )
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich.table import Table
 from rich import print as rprint
 
@@ -31,7 +33,8 @@ def get_clipboard_text():
         return ""
 
 def create_problem():
-    base_dir = os.getcwd()
+    base_dir = find_repo_root()
+    config = load_config(base_dir)
     console.print(Panel.fit(" [bold blue]Create New DSA Problem[/bold blue] ", border_style="blue"))
     
     categories = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and not d.startswith('.')]
@@ -48,7 +51,9 @@ def create_problem():
     submission_link = ""
     custom_code = ""
     question_link = ""
-    lang_ext = ".cpp"
+    lang_ext = config.get("default_language", ".py")
+    if not lang_ext.startswith('.'):
+        lang_ext = '.' + lang_ext
     
     if match:
         slug = match.group(1)
@@ -64,21 +69,46 @@ def create_problem():
             console.print(f"[bold green]✓[/bold green] Fetched data for problem: [bold white]{num}. {lc_data['title']}[/bold white]")
     
     if not lc_data:
-        console.print("\n[yellow]⚠ No valid LeetCode link in clipboard.[/yellow]")
-        console.print("1. LeetCode (Input ID)")
+        console.print("\n[yellow]⚠ No valid LeetCode link found in clipboard.[/yellow]")
+        console.print("1. LeetCode (Paste submission or problem link / ID)")
         console.print("2. Other Platform")
         choice = Prompt.ask("[bold cyan]Choose option[/bold cyan]", choices=["1", "2"], default="1")
         
         if choice == "1":
-            while True:
-                num_input = Prompt.ask("[bold cyan]Problem number[/bold cyan]").strip()
+            latest_clip = get_clipboard_text().strip()
+            clip_suggest = latest_clip if "leetcode.com" in latest_clip else ""
+            user_input = Prompt.ask(
+                "[bold cyan]Paste LeetCode submission link (or problem URL / ID)[/bold cyan]",
+                default=clip_suggest
+            ).strip()
+            
+            sub_url_match = re.search(r'leetcode\.com/problems/([a-zA-Z0-9\-]+)', user_input)
+            detail_sub_match = re.search(r'leetcode\.com/submissions/detail/(\d+)', user_input)
+            
+            if sub_url_match:
+                slug = sub_url_match.group(1)
+                if '/submissions/' in user_input:
+                    submission_link = user_input
+                with console.status(f"[bold cyan]Fetching data for '{slug}'...[/bold cyan]", spinner="dots"):
+                    lc_data = fetch_problem_data(slug)
+                if lc_data:
+                    num = lc_data['questionFrontendId']
+                    console.print(f"[bold green]✓[/bold green] Fetched data for problem: [bold white]{num}. {lc_data['title']}[/bold white]")
+            elif detail_sub_match:
+                submission_link = user_input
+                num_input = Prompt.ask("[bold cyan]Problem number/ID[/bold cyan]").strip()
                 if num_input:
                     num = num_input
-                    break
-            slug = get_slug_from_id(num)
-            if slug:
-                with console.status(f"[bold cyan]Fetching data for problem {num}...[/bold cyan]", spinner="dots"):
-                    lc_data = fetch_problem_data(slug)
+                    slug = get_slug_from_id(num)
+                    if slug:
+                        with console.status(f"[bold cyan]Fetching data for problem {num}...[/bold cyan]", spinner="dots"):
+                            lc_data = fetch_problem_data(slug)
+            else:
+                num = user_input
+                slug = get_slug_from_id(num)
+                if slug:
+                    with console.status(f"[bold cyan]Fetching data for problem {num}...[/bold cyan]", spinner="dots"):
+                        lc_data = fetch_problem_data(slug)
             
     # Process problem data
     category = None
@@ -145,7 +175,7 @@ def create_problem():
         
         custom_code = multiline_input("\nPaste your code here")
         
-        ext_input = Prompt.ask("[bold cyan]File extension (e.g., .cpp, .py)[/bold cyan]", default=".cpp").strip()
+        ext_input = Prompt.ask("[bold cyan]File extension (e.g., .cpp, .py)[/bold cyan]", default=lang_ext).strip()
         if ext_input:
             lang_ext = ext_input if ext_input.startswith('.') else '.' + ext_input
             
@@ -222,20 +252,25 @@ def create_problem():
             if session_cookie:
                 with console.status(f"[bold cyan]Fetching code for submission {sub_id}...[/bold cyan]", spinner="dots"):
                     csrf_token = get_csrf_token(session_cookie)
-                    details = fetch_submission_details(sub_id, session_cookie, csrf_token)
+                    details = fetch_submission_details(sub_id, session_cookie, csrf_token, base_dir=base_dir)
                 if details:
                     code_content = details.get('code', '')
                     lang_name = details.get('lang', {}).get('name', '')
                     lang_ext = LANG_EXTENSIONS.get(lang_name, f".{lang_name}")
                     console.print(f"[bold green]✓ Successfully fetched {lang_name} code![/bold green]")
                 else:
-                    console.print("[bold red]✗ Could not retrieve submission code (possibly expired or invalid cookie).[/bold red]")
+                    console.print("[bold red]✗ Could not retrieve submission code.[/bold red]")
                     
     if not code_content:
-        if lang_ext in ['.py', '.rb']:
-            code_content = f"# {num}. {title}\n\n"
-        else:
-            code_content = f"// {num}. {title}\n\n"
+        if lc_data:
+            console.print("[yellow]No code retrieved from submission.[/yellow]")
+            if Confirm.ask("[bold cyan]Would you like to paste your code manually?[/bold cyan]", default=False):
+                code_content = multiline_input("Paste your code here")
+        if not code_content:
+            if lang_ext in ['.py', '.rb']:
+                code_content = f"# {num}. {title}\n\n"
+            else:
+                code_content = f"// {num}. {title}\n\n"
             
     meta = get_metadata(code_content, interactive=True)
     code_content = clean_code(code_content)
@@ -320,8 +355,16 @@ def create_problem():
     console.print("\n[bold magenta]" + "="*40 + "[/bold magenta]")
     console.print("[bold white]Files have been generated and README updated![/bold white]")
     
-    ans = Prompt.ask("\n[bold cyan]Press Enter to commit and push, or type any character to skip[/bold cyan]", default="")
-    if ans == '':
+    auto_commit = config.get("auto_commit", False)
+    do_commit = False
+    if auto_commit:
+        console.print("\n[bold cyan]Auto-commit enabled in config: committing and pushing...[/bold cyan]")
+        do_commit = True
+    else:
+        ans = Prompt.ask("\n[bold cyan]Press Enter to commit and push, or type any character to skip[/bold cyan]", default="")
+        do_commit = (ans == '')
+
+    if do_commit:
         try:
             with console.status("[bold cyan]Committing to Git...[/bold cyan]", spinner="dots"):
                 subprocess.run(["git", "add", folder_path, "README.md", "docs/data.js", "docs/index.html"], check=True, capture_output=True)

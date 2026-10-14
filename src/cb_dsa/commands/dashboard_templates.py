@@ -1,5 +1,5 @@
 HTML_TEMPLATE = """<!doctype html>
-<html lang="en">
+<html lang="en" class="[[THEME_CLASS]]">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -120,7 +120,7 @@ HTML_TEMPLATE = """<!doctype html>
               
               <!-- Theme Toggle -->
               <label class="theme-switch" for="theme-toggle" title="Toggle Pink Toy Mode 🦄">
-                <input type="checkbox" id="theme-toggle" />
+                <input type="checkbox" id="theme-toggle" [[THEME_CHECKED]] />
                 <span class="slider">
                   <i class="fa-solid fa-moon icon"></i>
                   <i class="fa-solid fa-gamepad icon" style="color: #fff"></i>
@@ -697,6 +697,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // -------------------------------------------------------------
   // 4. CHART.JS CONFIGURATION
   // -------------------------------------------------------------
+  const savedTheme = localStorage.getItem("cb-dsa-theme");
+  if (savedTheme === "pink") {
+      document.body.classList.add("pink-mode");
+      document.documentElement.classList.add("pink-mode");
+  } else if (savedTheme === "dark") {
+      document.body.classList.remove("pink-mode");
+      document.documentElement.classList.remove("pink-mode");
+  } else if (document.body.classList.contains("pink-mode")) {
+      document.documentElement.classList.add("pink-mode");
+  }
+
   const getColors = () => {
       const isPink = document.body.classList.contains('pink-mode');
       return {
@@ -726,7 +737,20 @@ document.addEventListener("DOMContentLoaded", () => {
       },
       options: {
           responsive: true, maintainAspectRatio: false, cutout: '75%',
-          plugins: { legend: { position: 'bottom', labels: { padding: 20, color: colors.text, usePointStyle: true } } },
+          plugins: { 
+              legend: { position: 'bottom', labels: { padding: 20, color: colors.text, usePointStyle: true } },
+              tooltip: {
+                  callbacks: {
+                      label: function(context) {
+                          const label = context.label || '';
+                          const value = context.parsed || 0;
+                          const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                          const pct = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                          return ` ${label}: ${value} (${pct}%)`;
+                      }
+                  }
+              }
+          },
           onClick: (e, elements) => {
               if (elements.length > 0) {
                   const idx = elements[0].index;
@@ -872,12 +896,14 @@ document.addEventListener("DOMContentLoaded", () => {
   // -------------------------------------------------------------
   const topicPillsWrapper = document.getElementById("topic-pills-wrapper");
   if (topicPillsWrapper && data.categories) {
-      // Build topic counts manually from problems to ensure accuracy with current data
+      // Build topic counts across all unique topics of each problem to match search results exactly
       const topicCount = new Map();
       data.problems.forEach(p => {
-          let topTopic = (p.topics && p.topics.length > 0) ? p.topics[0] : p.category;
-          if(!topicCount.has(topTopic)) topicCount.set(topTopic, 0);
-          topicCount.set(topTopic, topicCount.get(topTopic)+1);
+          const topics = (p.topics && p.topics.length > 0) ? p.topics : [p.category];
+          const uniqueTopics = new Set(topics.filter(Boolean));
+          uniqueTopics.forEach(t => {
+              topicCount.set(t, (topicCount.get(t) || 0) + 1);
+          });
       });
       
       const sortedTopics = Array.from(topicCount.entries()).sort((a,b) => b[1] - a[1]);
@@ -971,18 +997,28 @@ document.addEventListener("DOMContentLoaded", () => {
   customStart.addEventListener("change", () => renderBarChart('custom', analyticsAgg.value));
   customEnd.addEventListener("change", () => renderBarChart('custom', analyticsAgg.value));
 
-  themeToggle.addEventListener("change", () => {
-      if (themeToggle.checked) { document.body.classList.add("pink-mode"); document.documentElement.classList.add("pink-mode"); } 
-      else { document.body.classList.remove("pink-mode"); document.documentElement.classList.remove("pink-mode"); }
-      colors = getColors();
-      Chart.defaults.color = colors.text;
-      donutChart.data.datasets[0].backgroundColor = [colors.easy, colors.medium, colors.hard];
-      donutChart.options.plugins.legend.labels.color = colors.text; donutChart.update();
-      if (barChart) {
-          barChart.data.datasets[0].backgroundColor = colors.easy; barChart.data.datasets[1].backgroundColor = colors.medium; barChart.data.datasets[2].backgroundColor = colors.hard;
-          barChart.options.scales.x.ticks.color = colors.text; barChart.options.scales.y.ticks.color = colors.text; barChart.update();
-      }
-  });
+  if (themeToggle) {
+      themeToggle.checked = document.body.classList.contains("pink-mode");
+      themeToggle.addEventListener("change", () => {
+          if (themeToggle.checked) { 
+              document.body.classList.add("pink-mode"); 
+              document.documentElement.classList.add("pink-mode"); 
+              localStorage.setItem("cb-dsa-theme", "pink");
+          } else { 
+              document.body.classList.remove("pink-mode"); 
+              document.documentElement.classList.remove("pink-mode"); 
+              localStorage.setItem("cb-dsa-theme", "dark");
+          }
+          colors = getColors();
+          Chart.defaults.color = colors.text;
+          donutChart.data.datasets[0].backgroundColor = [colors.easy, colors.medium, colors.hard];
+          donutChart.options.plugins.legend.labels.color = colors.text; donutChart.update();
+          if (barChart) {
+              barChart.data.datasets[0].backgroundColor = colors.easy; barChart.data.datasets[1].backgroundColor = colors.medium; barChart.data.datasets[2].backgroundColor = colors.hard;
+              barChart.options.scales.x.ticks.color = colors.text; barChart.options.scales.y.ticks.color = colors.text; barChart.update();
+          }
+      });
+  }
 
   // Accordion Logic
   const accHeader = document.getElementById("revision-accordion-header");
@@ -1137,7 +1173,9 @@ document.addEventListener("DOMContentLoaded", () => {
     filteredData = data.problems.filter((p) => {
       let matchesSearch = false;
       if (isTopicSearch) {
-        matchesSearch = p.topics && p.topics.some((t) => t.toLowerCase() === searchTopic);
+        const searchTopicLower = searchTopic.toLowerCase();
+        matchesSearch = (p.topics && p.topics.some((t) => t.toLowerCase() === searchTopicLower)) ||
+                        (p.category && p.category.toLowerCase() === searchTopicLower);
       } else {
         matchesSearch =
           p.title.toLowerCase().includes(currentSearch) ||

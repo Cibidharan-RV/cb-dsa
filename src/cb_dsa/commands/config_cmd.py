@@ -1,10 +1,11 @@
 import os
+import subprocess
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from cb_dsa.config import load_config, save_config
 from cb_dsa.commands.generate import update_readme
-from cb_dsa.core.utils import get_session_cookie
+from cb_dsa.core.utils import get_session_cookie, find_repo_root
 
 console = Console()
 
@@ -12,7 +13,7 @@ def config_command():
     """
     Modify configuration options for cb-dsa.
     """
-    base_dir = os.getcwd()
+    base_dir = find_repo_root()
     console.print(Panel.fit(" [bold blue]cb-dsa Configuration[/bold blue] ", border_style="blue"))
     config = load_config(base_dir)
 
@@ -57,11 +58,29 @@ def config_command():
             update_readme()
             
         elif choice == "4":
-            config["github_repo_url"] = Prompt.ask("GitHub Repository URL", default=config.get("github_repo_url"))
+            new_repo_url = Prompt.ask("GitHub Repository URL", default=config.get("github_repo_url")).strip()
+            config["github_repo_url"] = new_repo_url
             save_config(base_dir, config)
+            
+            # Sync git remote if .git exists
+            if new_repo_url and os.path.exists(os.path.join(base_dir, ".git")):
+                try:
+                    remotes = subprocess.run(["git", "remote"], cwd=base_dir, capture_output=True, text=True).stdout
+                    if "origin" in remotes:
+                        subprocess.run(["git", "remote", "set-url", "origin", new_repo_url], cwd=base_dir, check=True)
+                        console.print(f"[green]Updated git remote origin to {new_repo_url}[/green]")
+                    else:
+                        subprocess.run(["git", "remote", "add", "origin", new_repo_url], cwd=base_dir, check=True)
+                        console.print(f"[green]Added git remote origin {new_repo_url}[/green]")
+                except Exception as e:
+                    console.print(f"[yellow]Could not update git remote: {e}[/yellow]")
+                    
             console.print("[green]GitHub Repository URL updated! Regenerating dashboard...[/green]")
             update_readme()
             
         elif choice == "5":
-            get_session_cookie(base_dir, force_prompt=True)
-            console.print("[green]LeetCode session updated successfully![/green]")
+            cookie = get_session_cookie(base_dir, force_prompt=True)
+            if cookie:
+                console.print("[green]LeetCode session updated successfully![/green]")
+            else:
+                console.print("[yellow]Session cookie update was cancelled or skipped.[/yellow]")

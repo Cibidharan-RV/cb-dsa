@@ -25,6 +25,8 @@ DEFAULT_CONFIG = {
 }
 
 def load_config(base_dir: str) -> Dict[str, Any]:
+    from cb_dsa.core.utils import find_repo_root
+    base_dir = find_repo_root(base_dir)
     config_path = os.path.join(base_dir, CONFIG_FILE_NAME)
     if not os.path.exists(config_path):
         return DEFAULT_CONFIG.copy()
@@ -40,6 +42,8 @@ def load_config(base_dir: str) -> Dict[str, Any]:
             return DEFAULT_CONFIG.copy()
 
 def save_config(base_dir: str, config: Dict[str, Any]):
+    from cb_dsa.core.utils import find_repo_root
+    base_dir = find_repo_root(base_dir)
     config_path = os.path.join(base_dir, CONFIG_FILE_NAME)
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=4)

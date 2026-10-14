@@ -41,9 +41,14 @@ def init_command():
     console.print("You can find this in your browser's Developer Tools -> Application -> Cookies -> leetcode.com")
     leetcode_session = Prompt.ask("LEETCODE_SESSION cookie (leave blank to skip for now)", default="")
     if leetcode_session:
-        env_path = os.path.join(base_dir, ".env")
-        with open(env_path, "a", encoding="utf-8") as f:
-            f.write(f"LEETCODE_SESSION={leetcode_session}\n")
+        from cb_dsa.core.utils import write_env_var, sanitize_cookie, validate_session_cookie
+        cleaned = sanitize_cookie(leetcode_session)
+        is_valid, username = validate_session_cookie(cleaned)
+        write_env_var(base_dir, "LEETCODE_SESSION", cleaned)
+        if is_valid:
+            console.print(f"[bold green]✓ Authenticated as '{username}'! Session cookie saved to .env.[/bold green]")
+        else:
+            console.print("[yellow]Saved cookie to .env (could not verify active session with LeetCode).[/yellow]")
         
     save_config(base_dir, config)
     

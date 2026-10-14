@@ -8,6 +8,7 @@ from rich.console import Console
 
 from cb_dsa.commands.dashboard_templates import HTML_TEMPLATE, CSS_TEMPLATE, JS_TEMPLATE
 from cb_dsa.config import load_config
+from cb_dsa.core.utils import find_repo_root
 
 console = Console()
 
@@ -78,7 +79,7 @@ def parse_doc_file(filepath, category):
     }
 
 def update_readme():
-    base_dir = os.getcwd()
+    base_dir = find_repo_root()
     problems = []
     
     categories = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and not d.startswith('.') and d not in ['cb-dsa', 'docs', '__pycache__']]
@@ -229,15 +230,22 @@ def update_readme():
     config = load_config(base_dir)
     
     def customize_template(t):
+        def ensure_url(url):
+            if not url or url == "#": return "#"
+            if not url.startswith("http://") and not url.startswith("https://"):
+                return "https://" + url
+            return url
+
         t = t.replace("[[TITLE]]", config.get("dashboard_title", "DSA Journey"))
         t = t.replace("[[SUBTITLE]]", config.get("dashboard_subtitle", "My data structures & algorithms progress."))
         theme = config.get("dashboard_theme", "dark")
         t = t.replace("[[THEME_CLASS]]", "pink-mode" if theme == "pink" else "dark-mode")
-        t = t.replace("[[GITHUB_URL]]", config.get("github_url", "#"))
-        t = t.replace("[[LINKEDIN_URL]]", config.get("linkedin_url", "#"))
-        t = t.replace("[[TWITTER_URL]]", config.get("twitter_url", "#"))
-        t = t.replace("[[LEETCODE_URL]]", config.get("leetcode_url", "#"))
-        t = t.replace("[[GITHUB_REPO_URL]]", config.get("github_repo_url", ""))
+        t = t.replace("[[THEME_CHECKED]]", "checked" if theme == "pink" else "")
+        t = t.replace("[[GITHUB_URL]]", ensure_url(config.get("github_url", "#")))
+        t = t.replace("[[LINKEDIN_URL]]", ensure_url(config.get("linkedin_url", "#")))
+        t = t.replace("[[TWITTER_URL]]", ensure_url(config.get("twitter_url", "#")))
+        t = t.replace("[[LEETCODE_URL]]", ensure_url(config.get("leetcode_url", "#")))
+        t = t.replace("[[GITHUB_REPO_URL]]", ensure_url(config.get("github_repo_url", "")))
         return t
 
 
@@ -253,9 +261,8 @@ def update_readme():
         f.write(index_content)
             
     css_path = os.path.join(docs_dir, "styles.css")
-    if not os.path.exists(css_path):
-        with open(css_path, 'w', encoding='utf-8') as f:
-            f.write(CSS_TEMPLATE)
+    with open(css_path, 'w', encoding='utf-8') as f:
+        f.write(CSS_TEMPLATE)
 
     js_path = os.path.join(docs_dir, "app.js")
     with open(js_path, 'w', encoding='utf-8') as f:
