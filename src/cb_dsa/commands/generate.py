@@ -1,10 +1,20 @@
 import os
+import sys
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 import re
 import datetime
 import time
 import json
+import subprocess
 import urllib.parse
 from rich.console import Console
+from rich.prompt import Prompt
 
 from cb_dsa.commands.dashboard_templates import HTML_TEMPLATE, CSS_TEMPLATE, JS_TEMPLATE
 from cb_dsa.config import load_config
@@ -78,7 +88,7 @@ def parse_doc_file(filepath, category):
         'folder_path': os.path.dirname(filepath)
     }
 
-def update_readme():
+def update_readme(commit: bool = True):
     base_dir = find_repo_root()
     problems = []
     
@@ -269,6 +279,30 @@ def update_readme():
         f.write(customize_template(JS_TEMPLATE))
             
     console.print(f"[bold green]✓ Successfully updated README.md and docs/ dashboard files with {total_problems} problems.[/bold green]")
+    
+    if commit:
+        auto_commit = config.get("auto_commit", False)
+        do_commit = False
+        if auto_commit:
+            console.print("\n[bold cyan]Auto-commit enabled in config: committing and pushing...[/bold cyan]")
+            do_commit = True
+        else:
+            ans = Prompt.ask("\n[bold cyan]Press Enter to commit and push dashboard updates, or type any character to skip[/bold cyan]", default="")
+            do_commit = (ans == '')
+
+        if do_commit:
+            try:
+                with console.status("[bold cyan]Committing to Git...[/bold cyan]", spinner="dots"):
+                    subprocess.run(["git", "add", "README.md", "docs/"], cwd=base_dir, check=True, capture_output=True)
+                    commit_message = "Update dashboard and problem index"
+                    subprocess.run(["git", "commit", "-m", commit_message], cwd=base_dir, check=True, capture_output=True)
+                    console.print(f"[bold green]✓ Successfully committed to Git:[/bold green] '{commit_message}'")
+                    
+                console.print("[bold cyan]Pushing to GitHub...[/bold cyan]")
+                subprocess.run(["git", "push", "origin", "main"], cwd=base_dir, check=True)
+                console.print("[bold green]✓ Successfully pushed to GitHub![/bold green]")
+            except Exception as e:
+                console.print(f"[bold red]✗ Failed to auto-commit or push:[/bold red] {e}")
 
 if __name__ == "__main__":
     update_readme()

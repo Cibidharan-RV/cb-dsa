@@ -348,8 +348,8 @@ def create_problem():
     
     with console.status("[bold cyan]Updating README statistics...[/bold cyan]", spinner="dots"):
         from cb_dsa.commands.generate import update_readme
-        update_readme()
-        console.print("[bold green]✓ README updated![/bold green]")
+        update_readme(commit=False)
+        console.print("[bold green]✓ README and dashboard updated![/bold green]")
 
     console.print("\n[bold magenta]" + "="*40 + "[/bold magenta]")
     console.print("[bold white]Files have been generated and README updated![/bold white]")
@@ -366,13 +366,13 @@ def create_problem():
     if do_commit:
         try:
             with console.status("[bold cyan]Committing to Git...[/bold cyan]", spinner="dots"):
-                subprocess.run(["git", "add", folder_path, "README.md", "docs/data.js", "docs/index.html"], check=True, capture_output=True)
+                subprocess.run(["git", "add", folder_path, "README.md", "docs/"], cwd=base_dir, check=True, capture_output=True)
                 commit_message = f"{num}. {title}"
-                subprocess.run(["git", "commit", "-m", commit_message], check=True, capture_output=True)
+                subprocess.run(["git", "commit", "-m", commit_message], cwd=base_dir, check=True, capture_output=True)
                 console.print(f"[bold green]✓ Successfully committed to Git:[/bold green] '{commit_message}'")
                 
             console.print("[bold cyan]Pushing to GitHub...[/bold cyan]")
-            subprocess.run(["git", "push", "origin", "main"], check=True)
+            subprocess.run(["git", "push", "origin", "main"], cwd=base_dir, check=True)
             console.print("[bold green]✓ Successfully pushed to GitHub![/bold green]")
         except Exception as e:
             console.print(f"[bold red]✗ Failed to auto-commit or push:[/bold red] {e}")
