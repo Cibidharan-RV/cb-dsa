@@ -9,7 +9,8 @@ from rich.console import Console
 from cb_dsa.core.utils import (
     LANG_EXTENSIONS, get_session_cookie, get_csrf_token,
     fetch_problem_data, fetch_submission_details, fetch_submissions,
-    get_metadata, clean_code, find_repo_root, ensure_valid_session, read_env_file
+    get_metadata, clean_code, find_repo_root, ensure_valid_session, read_env_file,
+    get_category_folders
 )
 from cb_dsa.commands.generate import update_readme
 
@@ -71,7 +72,7 @@ def sync_leetcode():
         console.print("No accepted submissions found. Exiting.")
         return
         
-    categories = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and not d.startswith('.') and d not in ['cb-dsa', 'docs', '__pycache__']]
+    categories = get_category_folders(base_dir)
     category_map = {c.lower(): c for c in categories}
     category_map['array'] = 'Arrays'
     category_map['hash table'] = 'HashMaps'

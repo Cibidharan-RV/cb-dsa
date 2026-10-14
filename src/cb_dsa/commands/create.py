@@ -10,7 +10,7 @@ from cb_dsa.core.utils import (
     LANG_EXTENSIONS, get_session_cookie, get_csrf_token, fetch_problem_data, 
     fetch_submission_details, get_slug_from_id, get_last_category, save_last_category,
     get_switch_topic, reset_switch_topic, get_metadata, clean_code, multiline_input,
-    find_repo_root, ensure_valid_session
+    find_repo_root, ensure_valid_session, get_category_folders
 )
 
 from rich.console import Console
@@ -37,7 +37,7 @@ def create_problem():
     config = load_config(base_dir)
     console.print(Panel.fit(" [bold blue]Create New DSA Problem[/bold blue] ", border_style="blue"))
     
-    categories = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and not d.startswith('.')]
+    categories = get_category_folders(base_dir)
     category_map = {c.lower(): c for c in categories}
     category_map['array'] = 'Arrays'
     category_map['hash table'] = 'HashMaps'

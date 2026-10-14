@@ -18,6 +18,26 @@ LANG_EXTENSIONS = {
     'kotlin': '.kt', 'php': '.php'
 }
 
+IGNORED_DIRS = {
+    'cb-dsa', 'docs', 'dist', 'src', 'build', '__pycache__',
+    '.venv', 'venv', 'node_modules', '.git', '.idea', '.vscode'
+}
+
+def get_category_folders(base_dir):
+    """
+    Returns valid category directories, excluding tool and system directories.
+    """
+    base_dir = find_repo_root(base_dir)
+    if not os.path.exists(base_dir):
+        return []
+    return [
+        d for d in os.listdir(base_dir)
+        if os.path.isdir(os.path.join(base_dir, d))
+        and not d.startswith('.')
+        and d.lower() not in IGNORED_DIRS
+        and not d.endswith('.egg-info')
+    ]
+
 def find_repo_root(start_dir=None):
     """
     Find the root directory of the cb-dsa repository by looking for dsa-config.json or .git.

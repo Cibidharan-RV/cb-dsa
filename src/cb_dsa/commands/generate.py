@@ -8,7 +8,7 @@ from rich.console import Console
 
 from cb_dsa.commands.dashboard_templates import HTML_TEMPLATE, CSS_TEMPLATE, JS_TEMPLATE
 from cb_dsa.config import load_config
-from cb_dsa.core.utils import find_repo_root
+from cb_dsa.core.utils import find_repo_root, get_category_folders
 
 console = Console()
 
@@ -82,7 +82,7 @@ def update_readme():
     base_dir = find_repo_root()
     problems = []
     
-    categories = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and not d.startswith('.') and d not in ['cb-dsa', 'docs', '__pycache__']]
+    categories = get_category_folders(base_dir)
     
     for category in categories:
         category_path = os.path.join(base_dir, category)
