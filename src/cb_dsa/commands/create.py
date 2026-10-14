@@ -250,9 +250,8 @@ def create_problem():
             session_cookie = get_session_cookie(base_dir, prompt_if_missing=True)
             
             if session_cookie:
-                with console.status(f"[bold cyan]Fetching code for submission {sub_id}...[/bold cyan]", spinner="dots"):
-                    csrf_token = get_csrf_token(session_cookie)
-                    details = fetch_submission_details(sub_id, session_cookie, csrf_token, base_dir=base_dir)
+                csrf_token = get_csrf_token(session_cookie)
+                details = fetch_submission_details(sub_id, session_cookie, csrf_token, base_dir=base_dir)
                 if details:
                     code_content = details.get('code', '')
                     lang_name = details.get('lang', {}).get('name', '')

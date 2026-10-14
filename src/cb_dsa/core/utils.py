@@ -71,6 +71,7 @@ def sanitize_cookie(raw_cookie):
             c = re.sub(r'(?i)leetcode_session=', '', c).strip()
     c = c.split(';')[0].strip()
     c = c.strip("'\"")
+    c = re.sub(r'\s+', '', c)
     return c
 
 def read_env_file(base_dir):
@@ -199,10 +200,6 @@ def ensure_valid_session(base_dir, current_cookie=None):
         csrf = get_csrf_token(current_cookie)
         return current_cookie, csrf
         
-    console.print("\n[bold yellow]⚠ LeetCode session cookie is missing, expired, or invalid.[/bold yellow]")
-    console.print("LeetCode requires an active login session to fetch private submission code.")
-    console.print("[dim]Instructions: Open leetcode.com -> F12 -> Application -> Cookies -> Copy LEETCODE_SESSION[/dim]")
-    
     new_cookie = get_session_cookie(base_dir, force_prompt=True)
     if new_cookie:
         new_csrf = get_csrf_token(new_cookie)
@@ -323,7 +320,8 @@ def fetch_submission_details(submission_id, session_cookie, csrf_token, base_dir
       }
     }
     """
-    res = fetch_graphql(query, {"submissionId": int(submission_id)}, session_cookie, csrf_token)
+    with console.status(f"[bold cyan]Fetching code for submission {submission_id}...[/bold cyan]", spinner="dots"):
+        res = fetch_graphql(query, {"submissionId": int(submission_id)}, session_cookie, csrf_token)
     details = res.get('data', {}).get('submissionDetails') if res and 'data' in res else None
     if details and details.get('code'):
         return details
@@ -334,7 +332,8 @@ def fetch_submission_details(submission_id, session_cookie, csrf_token, base_dir
         console.print("[yellow]Could not retrieve submission code with current session cookie. Checking session...[/yellow]")
         new_cookie, new_csrf = ensure_valid_session(base_dir, session_cookie)
         if new_cookie and new_cookie != session_cookie:
-            res = fetch_graphql(query, {"submissionId": int(submission_id)}, new_cookie, new_csrf)
+            with console.status(f"[bold cyan]Retrying code fetch for submission {submission_id}...[/bold cyan]", spinner="dots"):
+                res = fetch_graphql(query, {"submissionId": int(submission_id)}, new_cookie, new_csrf)
             details = res.get('data', {}).get('submissionDetails') if res and 'data' in res else None
             if details and details.get('code'):
                 return details
